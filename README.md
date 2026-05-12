@@ -102,6 +102,24 @@ Feed `conversations.json` straight into Grok / Claude / another local agent.
 
 ---
 
+## 4b. Aggregate everything into a single Markdown file
+
+After exporting, combine all per-conversation Markdown files into one big
+chronological history file (with table of contents):
+
+```powershell
+python aggregate_markdown.py                        # -> gemini_export/HISTORY.md
+python aggregate_markdown.py --reverse              # oldest first
+python aggregate_markdown.py --split-by-month       # one file per YYYY-MM in gemini_export/HISTORY/
+python aggregate_markdown.py --out C:\path\out.md   # custom output path
+```
+
+Order follows `conversations.json` (Gemini's sidebar order = newest first).
+Per-chat headings are demoted by one level so the combined document stays a
+valid Markdown tree.
+
+---
+
 ## 5. Troubleshooting
 
 - **"could not connect"** — Chrome wasn't launched with `--remote-debugging-port=9222`,
