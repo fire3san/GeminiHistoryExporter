@@ -396,15 +396,105 @@ def scrape_conversation(page: Page, title: str) -> Conversation:
     # Give the model-response stream a moment in case it's still hydrating
     page.wait_for_timeout(600)
     turns = extract_turns(page)
+
+    # Try to recover a real title from the page itself — the sidebar snapshot
+    # often captures empty innerText for virtualized rows, leaving us with
+    # `chat_<id8>` placeholders. The conversation page has better sources.
+    better_title = get_page_title(page)
+    if better_title:
+        final_title = better_title
+    elif title and not title.startswith("chat_"):
+        final_title = title
+    else:
+        # last resort: first user turn snippet
+        snippet = ""
+        for t in turns:
+            if t.role == "user":
+                snippet = (t.text or "").strip().splitlines()[0]
+                break
+        final_title = snippet[:80] if snippet else (title or "Untitled")
+
     url = page.url
     convo_id = url.rsplit("/", 1)[-1] if "/" in url else url
     return Conversation(
         id=convo_id,
-        title=title or "Untitled",
+        title=final_title,
         url=url,
         scraped_at=datetime.utcnow().isoformat() + "Z",
         turns=turns,
     )
+
+
+def get_page_title(page: Page) -> str:
+    """Pull the conversation title from the open Gemini page.
+
+    Tries (in order):
+      1. The currently-selected sidebar item.
+      2. The sidebar item whose jslog matches the current URL's id.
+      3. The top-bar conversation title element.
+      4. document.title (minus the " - Gemini" suffix).
+    Returns "" if nothing reasonable is found.
+    """
+    try:
+        title = page.evaluate(
+            r"""
+            () => {
+              const clean = s => (s || '').replace(/\s+/g, ' ').trim().split('\n')[0];
+              const selectors = [
+                '[data-test-id="conversation"][aria-current]',
+                '[data-test-id="conversation"].selected',
+                '[data-test-id="conversation"].mdc-list-item--selected',
+                '[data-test-id="conversation"].active',
+              ];
+              for (const s of selectors) {
+                const el = document.querySelector(s);
+                if (el) {
+                  const t = clean(el.innerText);
+                  if (t) return t;
+                }
+              }
+              // Match by URL id
+              const m = location.pathname.match(/\/app\/([0-9a-f]+)/);
+              if (m) {
+                const id = m[1];
+                const els = document.querySelectorAll('[data-test-id="conversation"]');
+                for (const el of els) {
+                  const jslog = el.getAttribute('jslog') || '';
+                  const href = el.getAttribute('href') || '';
+                  if (jslog.includes('c_' + id) || href.includes(id)) {
+                    const t = clean(el.innerText);
+                    if (t) return t;
+                  }
+                }
+              }
+              // Top-bar / conversation title element
+              const tbSels = [
+                '[data-test-id="conversation-title"]',
+                '.conversation-title',
+                'top-bar-actions .title',
+                'top-bar-actions',
+              ];
+              for (const s of tbSels) {
+                const el = document.querySelector(s);
+                if (el) {
+                  const t = clean(el.innerText);
+                  if (t && t !== 'Gemini' && !/^(\u5347\u7d1a|\u516c\u53f8|Upgrade|Company)$/i.test(t)) {
+                    return t;
+                  }
+                }
+              }
+              // document.title fallback
+              const dt = (document.title || '').replace(/\s*[-\u2013]\s*Gemini.*$/i, '').trim();
+              if (dt && dt.toLowerCase() !== 'gemini' && dt.toLowerCase() !== 'google gemini') {
+                return dt;
+              }
+              return '';
+            }
+            """
+        )
+        return (title or "").strip()
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +601,8 @@ def load_existing(out_dir: Path) -> list[Conversation]:
     return out
 
 
-def run(cdp_url: str, out_dir: Path, limit: int | None, delay: float, force: bool) -> int:
+def run(cdp_url: str, out_dir: Path, limit: int | None, delay: float, force: bool,
+        retitle_only: bool = False) -> int:
     print(f"Connecting to Chrome at {cdp_url} ...")
     with sync_playwright() as pw:  # type: Playwright
         browser = None
@@ -578,6 +669,32 @@ def run(cdp_url: str, out_dir: Path, limit: int | None, delay: float, force: boo
             )
             entries = [e for e in entries if e["id"] not in done_ids]
 
+        # ---- Retitle-only mode: don't re-scrape turns, just fix bad titles ----
+        if retitle_only:
+            print("\n[retitle-only mode] Updating titles for already-exported chats.")
+            sidebar_titles = {e["id"]: e["title"] for e in expand_all_recents(page)}
+            fixed = 0
+            for c in existing:
+                fresh = sidebar_titles.get(c.id, "").strip()
+                # If sidebar gave us a real title now, use it
+                if fresh and not fresh.startswith("chat_") and fresh != c.title:
+                    if (not c.title) or c.title.startswith("chat_") or c.title == "Untitled":
+                        c.title = fresh
+                        fixed += 1
+                        continue
+                # If the stored title is still bad, fall back to first user turn snippet
+                if (not c.title) or c.title.startswith("chat_") or c.title == "Untitled":
+                    for t in c.turns:
+                        if t.role == "user":
+                            snippet = (t.text or "").strip().splitlines()[0][:80]
+                            if snippet:
+                                c.title = snippet
+                                fixed += 1
+                                break
+            write_outputs(existing, out_dir)
+            print(f"Retitled {fixed} conversations and re-wrote output files.")
+            return 0
+
         if limit:
             entries = entries[:limit]
         print(f"Found {len(entries)} conversations to scrape.")
@@ -635,8 +752,14 @@ def main() -> None:
         action="store_true",
         help="Re-scrape every conversation even if already in conversations.json",
     )
+    ap.add_argument(
+        "--retitle",
+        action="store_true",
+        help="Don't re-scrape turns. Just refresh the sidebar and update bad "
+             "titles (e.g. 'chat_xxxxxxxx') in the existing conversations.json.",
+    )
     args = ap.parse_args()
-    sys.exit(run(args.cdp, Path(args.out), args.limit, args.delay, args.force))
+    sys.exit(run(args.cdp, Path(args.out), args.limit, args.delay, args.force, args.retitle))
 
 
 if __name__ == "__main__":

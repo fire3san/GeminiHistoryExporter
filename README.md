@@ -120,6 +120,47 @@ valid Markdown tree.
 
 ---
 
+## 4c. Convert for import into another AI app
+
+`convert_for_import.py` re-encodes `conversations.json` into the export
+schemas used by other AI apps. This is what you upload to
+<https://gemini.google/import-memory/> (or to ChatGPT / Claude / Grok import
+flows) — Gemini's importer rejects the native scraper JSON because it isn't a
+"supported AI app" format.
+
+```powershell
+python convert_for_import.py --format all          # writes openai/, grok/, claude/
+python convert_for_import.py --format openai       # ChatGPT export schema
+python convert_for_import.py --format claude       # Claude export schema
+python convert_for_import.py --format grok         # Grok export schema
+python convert_for_import.py --in gemini_export/conversations.json --out-dir gemini_export/converted
+```
+
+Each format is written to its own subfolder under `gemini_export/converted/`
+as a single `conversations.json`. The script then re-reads the file and
+prints `OK` only if the on-disk conversation count matches the input —
+a built-in cross-check that nothing was silently dropped.
+
+The converter also cleans the data on the way out:
+
+- **Titles**: placeholder titles like `chat_abcd1234` or the Chinese UI label
+  `你說了` are replaced by a snippet of the first user prompt.
+- **Bodies**: UI labels Gemini injects into the DOM (`你說了`,
+  `Gemini 說了`, `顯示思路`, `Sources`, `Show thinking`, …) are stripped —
+  including when they appear as Markdown headings (`## Gemini 說了`).
+- **Duplicates**: consecutive same-role turns with identical text (a known
+  side-effect of Gemini's nested `<user-query>` DOM) are collapsed.
+
+If you only want to refresh titles on an existing scrape without re-running
+the full export, use the scraper's retitle mode (it visits each conversation
+URL just long enough to read the tab title):
+
+```powershell
+python scrape_gemini.py --retitle
+```
+
+---
+
 ## 5. Troubleshooting
 
 - **"could not connect"** — Chrome wasn't launched with `--remote-debugging-port=9222`,
