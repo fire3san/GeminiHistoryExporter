@@ -26,6 +26,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from schemas import SCHEMA_VALIDATORS
+
 from convert_for_import import (
     UI_NOISE_LINES,
     _clean_turns,
@@ -236,6 +238,18 @@ def main() -> int:
             validator(path, expected_convos, expected_msgs, check)
         except Exception as e:
             check.ok(f"{fmt}: validator crashed", False, repr(e))
+        schema_fn = SCHEMA_VALIDATORS.get(fmt)
+        if schema_fn is not None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                schema_errs = schema_fn(data)
+                check.ok(
+                    f"{fmt}: schema-valid",
+                    not schema_errs,
+                    f"{len(schema_errs)} errors; first: {schema_errs[0]}" if schema_errs else "",
+                )
+            except Exception as e:
+                check.ok(f"{fmt}: schema check crashed", False, repr(e))
         print()
 
     return check.summary()

@@ -224,6 +224,39 @@ absence of UI-noise lines in message bodies, and normalised sender values.
 
 ---
 
+## 4e. Run every self-test at once
+
+```powershell
+python run_all_tests.py             # re-runs both converters, then validates
+python run_all_tests.py --skip-run  # validate the existing converted files only
+```
+
+Each output is checked against a lightweight structural schema in
+[schemas.py](schemas.py) (no extra dependency — pure Python type checks),
+in addition to the conversation/message-count and content-cleanliness checks
+in the individual test scripts.
+
+---
+
+## 4f. Search your history
+
+After you've aggregated `HISTORY.md` (section 4b), full-text search across
+every conversation:
+
+```powershell
+python search_history.py "asyncio cancel"
+python search_history.py "playwright"          --titles-only
+python search_history.py "^def\s+to_"          --regex
+python search_history.py "foo" --context 4 --max 20
+python search_history.py "foo" --dir gemini_export/markdown
+```
+
+The script splits Markdown by `#` / `##` headings so hits are reported with
+their conversation title and line number; use `--titles-only` for a quick
+TOC-style index of which chats touched a topic.
+
+---
+
 ## 5. Troubleshooting
 
 - **"could not connect"** — Chrome wasn't launched with `--remote-debugging-port=9222`,
