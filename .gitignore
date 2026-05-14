@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 gemini_export/
 .chrome-debug-profile/
+grok_export/

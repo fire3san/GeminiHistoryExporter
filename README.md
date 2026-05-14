@@ -151,6 +151,20 @@ The converter also cleans the data on the way out:
 - **Duplicates**: consecutive same-role turns with identical text (a known
   side-effect of Gemini's nested `<user-query>` DOM) are collapsed.
 
+### Self-test
+
+A companion smoke test validates every output:
+
+```powershell
+python test_gemini_conversion.py             # run converter, then validate
+python test_gemini_conversion.py --skip-run  # only validate existing files
+```
+
+It checks each target file for: parseability, expected top-level shape,
+matching conversation count, matching cleaned message count, non-blank
+titles, absence of UI-noise lines in message bodies, and normalised
+sender values.
+
 If you only want to refresh titles on an existing scrape without re-running
 the full export, use the scraper's retitle mode (it visits each conversation
 URL just long enough to read the tab title):
@@ -158,6 +172,55 @@ URL just long enough to read the tab title):
 ```powershell
 python scrape_gemini.py --retitle
 ```
+
+---
+
+## 4d. Convert a **Grok export** for import elsewhere
+
+If you've downloaded your Grok data (`prod-grok-backend.json`), drop it into
+`grok_export/` and run `convert_grok_for_import.py` to convert it into the
+same four target schemas plus a clean re-emit of Grok's own format.
+
+```powershell
+# Default: reads grok_export/prod-grok-backend.json
+# writes  grok_export/converted/{openai,claude,grok,gemini}/conversations.json
+python convert_grok_for_import.py
+
+# Single target
+python convert_grok_for_import.py --format openai
+python convert_grok_for_import.py --format claude
+python convert_grok_for_import.py --format grok      # cleaned Grok schema (for Grok-4 re-import)
+python convert_grok_for_import.py --format gemini    # ChatGPT shape, for Gemini import-memory
+
+# Explicit paths
+python convert_grok_for_import.py --in C:\path\to\export.json --out-dir .\grok_export\converted
+```
+
+Key behaviour:
+
+- **Real timestamps preserved** — Grok stores per-message `create_time` as
+  `{"$date": {"$numberLong": "<ms epoch>"}}`. Those are converted into each
+  target schema's native timestamp shape (no synthetic 1-sec spacing needed).
+- **Sender casing normalized** — Grok mixes `"human"`, `"assistant"`, and
+  `"ASSISTANT"` in the same file. All become `human` / `assistant`.
+- **Same cleaning as the Gemini converter** — title rescue, UI-noise
+  stripping, consecutive-duplicate collapse (via shared helpers in
+  `convert_for_import.py`).
+- **Cross-check** — every output file is re-read after writing and the
+  conversation count must match the input. Conversion fails loudly otherwise.
+
+### Self-test
+
+A smoke test script validates every output:
+
+```powershell
+python test_grok_conversion.py             # run converter, then validate
+python test_grok_conversion.py --skip-run  # only validate existing files
+```
+
+It checks each target file for: parseability, expected top-level shape,
+matching conversation count, matching total message count, non-blank titles,
+absence of UI-noise lines in message bodies, and normalised sender values.
 
 ---
 
